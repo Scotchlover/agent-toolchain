@@ -14,6 +14,7 @@ var hunt_t := 0.0
 var saw_defense := false
 var horde_before_bell := 0
 var sovereign_hits := 0
+var _exit_code := 0
 
 func _ready() -> void:
 	Engine.time_scale = 6.0
@@ -156,4 +157,12 @@ func _finish() -> void:
 	set_process(false)
 	print("---")
 	print("VILLAGE CHECKS=%d FAILS=%d" % [checks, fails])
-	get_tree().quit(1 if fails > 0 else 0)
+	_exit_code = 1 if fails > 0 else 0
+	if main != null and is_instance_valid(main):
+		main.shutdown_sfx()
+	call_deferred("_quit_after_audio_release")
+
+func _quit_after_audio_release() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_tree().quit(_exit_code)

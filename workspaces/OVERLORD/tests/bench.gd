@@ -7,6 +7,7 @@ var t := 0.0
 var frames := 0
 var acc := 0.0
 var hunt_t := 0.0
+var _finishing := false
 
 func _ready() -> void:
 	Engine.time_scale = 1.0   # real-time cost measurement
@@ -20,7 +21,7 @@ func _process(dt: float) -> void:
 	t += dt
 	if t > 40.0:
 		print("BENCH safety exit")
-		get_tree().quit(0)
+		_request_exit()
 		return
 	if t < 1.0:
 		return
@@ -44,4 +45,18 @@ func _process(dt: float) -> void:
 		print("BENCH process=%.3fms physics=%.3fms" % [
 			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
 			Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0])
-		get_tree().quit(0)
+		_request_exit()
+
+func _request_exit() -> void:
+	if _finishing:
+		return
+	_finishing = true
+	set_process(false)
+	if main != null and is_instance_valid(main):
+		main.shutdown_sfx()
+	call_deferred("_quit_after_audio_release")
+
+func _quit_after_audio_release() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_tree().quit(0)

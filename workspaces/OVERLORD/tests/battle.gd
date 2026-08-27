@@ -12,6 +12,8 @@ var checks := 0
 var saw_party := false
 var saw_breach := false
 var deaths_at_start := 0
+var horde_alive_start := 0
+var min_horde_alive := 999
 
 func _ready() -> void:
 	Engine.time_scale = 6.0
@@ -58,7 +60,10 @@ func _process(dt: float) -> void:
 				if not saw_party:
 					saw_party = true
 					deaths_at_start = _dead_heroes()
+					horde_alive_start = main.horde.total_alive()
+					min_horde_alive = horde_alive_start
 					print("      party spawned, hunting begins")
+				_sample_horde_losses()
 				if t > 2.0:
 					for cc in main.horde.cohorts:
 						for h in main.party.live_members():
@@ -71,6 +76,7 @@ func _process(dt: float) -> void:
 					phase = "melee"
 					t = 0.0
 		"melee":
+			_sample_horde_losses()
 			var p = main.party
 			if p == null and saw_party:
 				_resolve_checks()
@@ -78,6 +84,11 @@ func _process(dt: float) -> void:
 				ok(false, "battle unresolved")
 				_dump()
 				_finish()
+
+func _sample_horde_losses() -> void:
+	if main == null or main.horde == null:
+		return
+	min_horde_alive = mini(min_horde_alive, main.horde.total_alive())
 
 func _dead_heroes() -> int:
 	var n := 0
@@ -91,8 +102,14 @@ func _resolve_checks() -> void:
 	var result := GS.world.last_result
 	ok(result.length() > 0, "battle resolved: %s" % result)
 	ok(_dead_heroes() > 0 or result.contains("repelled"), "horde drew blood (%d dead)" % _dead_heroes())
-	ok(GS.minions_alive < 14, "the horde paid too (%d left)" % GS.minions_alive)
-	ok(main.fortress.interactables["gate_portcullis"]["body"].position.y > 3.5 or true, "gate state sane")
+	ok(min_horde_alive < horde_alive_start,
+		"horde paid during combat (minimum %d/%d)" % [min_horde_alive, horde_alive_start])
+	ok(GS.minions_alive == 14 and main.horde.total_alive() == 14,
+		"horde remustered after raid (%d)" % GS.minions_alive)
+	var gate: Dictionary = main.fortress.interactables["gate_portcullis"]
+	var gate_y: float = float(gate["body"].position.y)
+	ok(gate_y >= float(gate["lowered_y"]) - 0.1 and gate_y <= float(gate["raised_y"]) + 0.1,
+		"gate body remains within authored travel (%.1f)" % gate_y)
 	_finish()
 
 func _dump() -> void:

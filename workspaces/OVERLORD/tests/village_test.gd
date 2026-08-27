@@ -131,13 +131,13 @@ func _sovereign_pressure(foe: Node) -> void:
 	if foe == null or not is_instance_valid(foe) or not (foe is Node3D):
 		return
 	var target_pos := (foe as Node3D).global_position
-	var to := target_pos - main.sovereign.global_position
+	var to: Vector3 = target_pos - main.sovereign.global_position
 	to.y = 0.0
 	if to.length_squared() < 0.01:
 		to = Vector3.FORWARD
 	if to.length() > 3.0:
 		main.sovereign.global_position = target_pos - to.normalized() * 2.4 + Vector3(0, 0.2, 0)
-	var face := target_pos - main.sovereign.global_position
+	var face: Vector3 = target_pos - main.sovereign.global_position
 	face.y = 0.0
 	if face.length_squared() > 0.01:
 		main.sovereign.facing = face.normalized()

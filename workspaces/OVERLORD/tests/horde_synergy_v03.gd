@@ -58,6 +58,14 @@ func test_role_target_priority() -> void:
 	var brute_caster := Minion.local_target_score("brute", "wizard", false, 2.0)
 	ok(brute_front > brute_caster,
 		"roles: Brute prefers frontline pressure instead of copying Skitterer logic")
+	var captain := Minion.grunt_target_score("brute", "shield", true, 2.0)
+	var regular := Minion.grunt_target_score("brute", "shield", false, 2.0)
+	ok(captain > regular,
+		"roles: outdoor militia captain is a valid high-priority Horde target")
+	var skitter_archer := Minion.grunt_target_score("skitterer", "archer", false, 2.0)
+	var skitter_shield := Minion.grunt_target_score("skitterer", "shield", false, 2.0)
+	ok(skitter_archer > skitter_shield,
+		"roles: Skitterer outdoor priority safely distinguishes ranged militia")
 
 func test_exposed_opening() -> void:
 	ok(absf(Minion.opening_damage_multiplier("skitterer", true) - 1.45) < 0.001,

@@ -312,16 +312,35 @@ func find_local_enemy(space_state: PhysicsDirectSpaceState3D) -> Node:
 	var hits := Combat.actors_in_radius(space_state, global_position + Vector3(0, 0.6, 0), AGGRO_RADIUS, Combat.MASK_HERO)
 	var best: Node = null
 	var best_score := -INF
-	for h in hits:
-		if Combat.target_spent(h):
+	for candidate in hits:
+		if Combat.target_spent(candidate) or not (candidate is Node3D):
 			continue
-		var hero := h as Hero
-		var d := hero.global_position.distance_to(global_position)
-		var score := local_target_score(type_id, hero.role, hero.is_guard_broken(), d)
+		var actor := candidate as Node3D
+		var d: float = actor.global_position.distance_to(global_position)
+		var score := 10.0 - d
+		if candidate is Hero:
+			var hero := candidate as Hero
+			score = local_target_score(type_id, hero.role, hero.is_guard_broken(), d)
+		elif candidate is Grunt:
+			var grunt := candidate as Grunt
+			score = grunt_target_score(type_id, grunt.archetype, grunt.is_captain, d)
+		else:
+			continue
 		if score > best_score:
 			best_score = score
-			best = hero
+			best = candidate
 	return best
+
+static func grunt_target_score(p_type: String, archetype: String,
+		is_captain: bool, distance: float) -> float:
+	var score := 10.0 - distance
+	if is_captain:
+		score += 4.0
+	if p_type == "skitterer" and archetype == "archer":
+		score += 2.0
+	elif p_type == "brute" and archetype == "shield":
+		score += 2.0
+	return score
 
 # ---------------------------------------------------------------- damage -----
 func take_damage(dmg: float, source: Node = null) -> void:

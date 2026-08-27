@@ -26,6 +26,7 @@ func setup(p_sovereign: Sovereign, p_fortress: FortressBuilder, root: Node3D) ->
 			cc.members.append(m)
 			idx += 1
 		cohorts.append(cc)
+	refresh_alive_count()
 
 func _physics_process(dt: float) -> void:
 	if sovereign == null or not is_instance_valid(sovereign):
@@ -33,7 +34,7 @@ func _physics_process(dt: float) -> void:
 	empower_left = maxf(0.0, empower_left - dt)
 	for cc in cohorts:
 		cc.update(sovereign, dt)
-	Safe.gs().minions_alive = total_alive()
+	refresh_alive_count()
 
 # ------------------------------------------------------------- commands ------
 func issue_follow() -> void:
@@ -125,9 +126,15 @@ func nearest_minion_dist_to(pos: Vector3) -> float:
 			best = minf(best, m.global_position.distance_to(pos))
 	return best
 
+func refresh_alive_count() -> int:
+	var n := total_alive()
+	Safe.gs().minions_alive = n
+	return n
+
 func total_alive() -> int:
 	var n := 0
-	for cc in cohorts: n += cc.count_alive()
+	for cc in cohorts:
+		n += cc.count_alive()
 	return n
 
 func cohort_summary() -> String:
@@ -171,6 +178,7 @@ func remuster(root: Node3D) -> void:
 			idx += 1
 		cohorts.append(cc)
 		cc.command_follow()
+	refresh_alive_count()
 	Safe.gs().el("The horde re-musters from the dark.")
 
 func raise_risen(count: int, pos: Vector3, root: Node3D) -> void:
@@ -184,6 +192,7 @@ func raise_risen(count: int, pos: Vector3, root: Node3D) -> void:
 		cc.members.append(m)
 	cc.command_follow()
 	cohorts.append(cc)
+	refresh_alive_count()
 
 func return_home(spawn: Vector3) -> void:
 	for cc in cohorts:

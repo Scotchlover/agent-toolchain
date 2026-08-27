@@ -1,0 +1,83 @@
+name: OVERLORD runtime validation
+
+on:
+  push:
+    branches: ["ci/overlord-v03-runtime"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  godot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify bundled Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd runtimes/godot/4.7.2/linux-x86_64
+          sha256sum -c SHA256SUMS.txt
+          unzip -q Godot_v4.7.2-stable_linux.x86_64.zip -d /tmp/godot
+          GODOT=/tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          chmod +x "$GODOT"
+          echo "GODOT=$GODOT" >> "$GITHUB_ENV"
+          "$GODOT" --version
+
+      - name: Parse and import
+        shell: bash
+        working-directory: workspaces/OVERLORD
+        run: |
+          set -euo pipefail
+          timeout 90s "$GODOT" --headless --path . --editor --quit
+
+      - name: Compile production scripts
+        shell: bash
+        working-directory: workspaces/OVERLORD
+        run: |
+          set -euo pipefail
+          timeout 90s "$GODOT" --headless --path . --script res://tests/compile_all.gd
+
+      - name: Contract suites
+        shell: bash
+        working-directory: workspaces/OVERLORD
+        run: |
+          set -euo pipefail
+          tests=(
+            test_runner.gd
+            controller_v03.gd
+            combat_v03.gd
+            expedition_v03.gd
+            interception_v03.gd
+            depth_v03.gd
+            persistence_v03.gd
+            combat_intelligence_v03.gd
+            horde_synergy_v03.gd
+            invasion_drama_v03.gd
+          )
+          for test in "${tests[@]}"; do
+            echo "::group::tests/$test"
+            timeout 90s "$GODOT" --headless --path . --script "res://tests/$test"
+            echo "::endgroup::"
+          done
+
+      - name: Scene integration suites
+        shell: bash
+        working-directory: workspaces/OVERLORD
+        run: |
+          set -euo pipefail
+          for scene in smoke deep battle village_test; do
+            echo "::group::tests/$scene.tscn"
+            timeout 120s "$GODOT" --headless --path . "res://tests/$scene.tscn"
+            echo "::endgroup::"
+          done
+
+      - name: Bench smoke
+        shell: bash
+        working-directory: workspaces/OVERLORD
+        run: |
+          set -euo pipefail
+          timeout 75s "$GODOT" --headless --path . "res://tests/bench.tscn"

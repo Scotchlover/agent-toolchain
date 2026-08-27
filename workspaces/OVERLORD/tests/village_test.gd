@@ -13,6 +13,7 @@ var gold_before := 0
 var hunt_t := 0.0
 var saw_defense := false
 var horde_before_bell := 0
+var sovereign_hits := 0
 
 func _ready() -> void:
 	Engine.time_scale = 6.0
@@ -41,6 +42,8 @@ func _process(dt: float) -> void:
 			if t > 1.0:
 				main.sovereign.max_hp = 1000000.0   # deterministic survival
 				main.sovereign.hp = main.sovereign.max_hp
+				if not main.sovereign.hit_landed.is_connected(_on_sovereign_hit):
+					main.sovereign.hit_landed.connect(_on_sovereign_hit)
 				GS.world.gold = 500
 				gold_before = GS.world.gold
 				main.start_outdoor_raid("village")
@@ -58,6 +61,7 @@ func _process(dt: float) -> void:
 					("null" if foe == null else "ok"), main.militia_alive(),
 					main.sovereign.global_position.z])
 				main.horde.issue_hunt(foe)
+				_sovereign_pressure(foe)
 			if main.militia_alive() == 0 or main.outdoor_region == "":
 				if main.outdoor_region != "":
 					ok(true, "militia broken")
@@ -72,7 +76,8 @@ func _process(dt: float) -> void:
 				for g in get_tree().get_nodes_in_group("militia"):
 					if is_instance_valid(g):
 						print("      MILITIA dead=%s pos=%s hp=%.0f" % [str(g.dead), str((g as Node3D).global_position), g.hp])
-				ok(false, "village fight stalled (%d militia left)" % main.militia_alive())
+				ok(false, "village fight stalled (%d militia left, horde=%d, sovereign_hits=%d)" % [
+					main.militia_alive(), main.horde.total_alive(), sovereign_hits])
 				for l in GS.log.lines(12):
 					print(l)
 				_finish()
@@ -119,7 +124,27 @@ func _process(dt: float) -> void:
 				ok(absf(main.village.chest_pos.x - 400.0) < 1.0, "site built at its own origin")
 				_finish()
 
+func _on_sovereign_hit(victims: int) -> void:
+	sovereign_hits += victims
+
+func _sovereign_pressure(foe: Node) -> void:
+	if foe == null or not is_instance_valid(foe) or not (foe is Node3D):
+		return
+	var target_pos := (foe as Node3D).global_position
+	var to := target_pos - main.sovereign.global_position
+	to.y = 0.0
+	if to.length_squared() < 0.01:
+		to = Vector3.FORWARD
+	if to.length() > 3.0:
+		main.sovereign.global_position = target_pos - to.normalized() * 2.4 + Vector3(0, 0.2, 0)
+	var face := target_pos - main.sovereign.global_position
+	face.y = 0.0
+	if face.length_squared() > 0.01:
+		main.sovereign.facing = face.normalized()
+	main.sovereign.try_heavy_attack()
+
 func _after_victory() -> void:
+	ok(sovereign_hits > 0, "Sovereign personally contributed (%d heavy-hit victims)" % sovereign_hits)
 	ok(main.outdoor_region == "", "returned to the fortress")
 	ok(GS.world.gold == gold_before + 15, "tribute paid (+15 gold)")
 	ok(GS.world.fear >= 10, "fear rose from the sack")

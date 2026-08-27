@@ -1,0 +1,42 @@
+name: Export OVERLORD validation base
+
+on:
+  push:
+    paths:
+      - '.github/workflows/export-overlord-validation-base.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout toolchain
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      - name: Materialize historical validated snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot=c9d40ac562b9d4e49da1485fe63562e2620f1a10
+          mkdir -p export
+          git fetch --depth=1 origin "$snapshot"
+          git archive "$snapshot" workspaces/OVERLORD | tar -x -C export
+          mkdir -p export/runtime
+          cp runtimes/godot/4.7.2/linux-x86_64/Godot_v4.7.2-stable_linux.x86_64.zip export/runtime/
+          cp runtimes/godot/4.7.2/linux-x86_64/SHA256SUMS.txt export/runtime/
+          find export/workspaces/OVERLORD -type f | sort > export/snapshot-files.txt
+          echo "$snapshot" > export/snapshot-commit.txt
+          sha256sum export/runtime/Godot_v4.7.2-stable_linux.x86_64.zip > export/runtime-actual-sha256.txt
+
+      - name: Upload validation base
+        uses: actions/upload-artifact@v4
+        with:
+          name: overlord-validation-base-c9d40ac
+          path: export/
+          retention-days: 1

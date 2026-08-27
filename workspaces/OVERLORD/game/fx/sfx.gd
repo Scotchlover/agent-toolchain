@@ -21,6 +21,9 @@ const CUES := {
 	"breach": [92.0, 38.0, 0.28, 0.92, 0.42],
 }
 
+static func clear_cache() -> void:
+	_cache.clear()
+
 static func stream(cue: String) -> AudioStreamWAV:
 	if _cache.has(cue):
 		return _cache[cue]

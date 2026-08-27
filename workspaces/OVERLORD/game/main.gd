@@ -75,6 +75,17 @@ func spawn_impact(pos: Vector3, color: Color = Color(1.0, 0.5, 0.25)) -> void:
 var village: VillageBuilder = null
 var outdoor_region := ""      # "" while in the fortress
 
+func _exit_tree() -> void:
+	# Headless/runtime scene teardown can happen while short procedural SFX are
+	# still playing. Stop playback and release stream references explicitly so
+	# AudioStreamPlaybackWAV objects do not survive the scene.
+	for player in _sfx_players:
+		if is_instance_valid(player):
+			player.stop()
+			player.stream = null
+	_sfx_players.clear()
+	Sfx.clear_cache()
+
 func _ready() -> void:
 	Safe.gs().main = self
 	fortress = FortressBuilder.new()

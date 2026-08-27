@@ -75,6 +75,13 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Village leak diagnostic
+        shell: bash
+        working-directory: workspaces/OVERLORD
+        run: |
+          set -euo pipefail
+          timeout 120s "$GODOT" --headless --verbose --path . "res://tests/village_test.tscn"
+
       - name: Bench smoke
         shell: bash
         working-directory: workspaces/OVERLORD

@@ -12,6 +12,7 @@ var checks := 0
 var gold_before := 0
 var hunt_t := 0.0
 var saw_defense := false
+var horde_before_bell := 0
 
 func _ready() -> void:
 	Engine.time_scale = 6.0
@@ -76,6 +77,9 @@ func _process(dt: float) -> void:
 					print(l)
 				_finish()
 		"bell":
+			horde_before_bell = main.horde.total_alive()
+			ok(GS.minions_alive == horde_before_bell,
+				"horde count is truthful before Soul Bell (%d)" % horde_before_bell)
 			GS.world.gold += 200
 			main._buy_upgrade("soul_bell")
 			ok(GS.domain.upgrades.has("soul_bell"), "Soul Bell installed")
@@ -91,7 +95,11 @@ func _process(dt: float) -> void:
 					if cc.id == "risen" and cc.count_alive() == 3:
 						risen_found = true
 				ok(risen_found, "three Risen claw free of the crypt")
-				ok(GS.minions_alive >= 14, "warband strengthened (%d)" % GS.minions_alive)
+				ok(main.horde.total_alive() == horde_before_bell + 3,
+					"Soul Bell adds exactly three defenders (%d -> %d)" % [
+						horde_before_bell, main.horde.total_alive()])
+				ok(GS.minions_alive == main.horde.total_alive(),
+					"global Horde count matches physical actors (%d)" % GS.minions_alive)
 				var lt_found := false
 				for m in main.horde.cohorts[0].members:
 					if is_instance_valid(m) and m.is_lieutenant:

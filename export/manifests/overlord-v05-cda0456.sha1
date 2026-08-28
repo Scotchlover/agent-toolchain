@@ -130,5 +130,4 @@ aeaec705e7a4c3c011f518ff9c26843290c8f9c7  tests/test_runner.gd
 797f04a47828849bd4e969f2bfe87a3ba98ad6bb  tests/village_test.gd
 00118b8e1ba03aebecc2d74a811334ca895c0ce6  tests/village_test.gd.uid
 3511a52bc862e65a8dab4f512b1793be645249d9  tests/village_test.tscn
-52457a32cd162e7645795a0fde1e66d68a177a00  THIRD_PARTY.md
 506e908b582576337c6c9dfb7e66d0a052a34cc2  tools/validate_v05_playtest_telemetry.ps1

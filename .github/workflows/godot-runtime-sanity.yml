@@ -1,0 +1,178 @@
+name: Godot pinned runtime sanity
+
+on:
+  push:
+    branches:
+      - verification/godot-runtime-sanity
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-sanity:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: godot_4_7_2
+            label: Godot 4.7.2 stable runtime sanity
+            runtime_path: runtimes/godot/4.7.2/linux-x86_64/Godot_v4.7.2-stable_linux.x86_64.zip
+            runtime_sha256: cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4
+            required_prefix: 4.7.2.stable
+          - id: godot_4_8_dev4
+            label: Godot 4.8-dev4 runtime sanity
+            runtime_path: runtimes/godot/4.8-dev4/linux-x86_64/Godot_v4.8-dev4_linux.x86_64.zip
+            runtime_sha256: b805cc7918f09bb409f596d010a771aad2f03d669b536f0cdabec73b31446538
+            required_prefix: 4.8.dev4
+
+    steps:
+      - name: Checkout toolchain with LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Verify archive SHA and executable
+        env:
+          RUNTIME_PATH: ${{ matrix.runtime_path }}
+          RUNTIME_SHA256: ${{ matrix.runtime_sha256 }}
+          REQUIRED_PREFIX: ${{ matrix.required_prefix }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence "$RUNNER_TEMP/godot"
+          test -f "$RUNTIME_PATH"
+          echo "$RUNTIME_SHA256  $RUNTIME_PATH" | sha256sum -c - | tee evidence/sha256.txt
+          file "$RUNTIME_PATH" | tee evidence/archive-file.txt
+          unzip -q "$RUNTIME_PATH" -d "$RUNNER_TEMP/godot"
+          godot="$(find "$RUNNER_TEMP/godot" -maxdepth 2 -type f -name 'Godot*' | head -n 1)"
+          test -n "$godot"
+          chmod +x "$godot"
+          file "$godot" | tee evidence/executable-file.txt
+          ldd "$godot" | tee evidence/ldd.txt
+          if grep -q 'not found' evidence/ldd.txt; then
+            echo "Missing shared library dependency" >&2
+            exit 1
+          fi
+          version="$("$godot" --version | head -n 1)"
+          echo "$version" | tee evidence/version.txt
+          case "$version" in
+            "$REQUIRED_PREFIX"*) ;;
+            *) echo "Version mismatch: $version, expected $REQUIRED_PREFIX*" >&2; exit 1 ;;
+          esac
+          echo "GODOT_EXE=$godot" >> "$GITHUB_ENV"
+
+      - name: Build clean minimal project
+        run: |
+          set -euo pipefail
+          mkdir -p runtime_sanity
+          cat > runtime_sanity/project.godot <<'EOF'
+          ; Engine configuration file.
+          ; Runtime-sanity fixture generated in CI.
+          config_version=5
+
+          [application]
+
+          config/name="Pinned Runtime Sanity"
+
+          [rendering]
+
+          renderer/rendering_method="gl_compatibility"
+          renderer/rendering_method.mobile="gl_compatibility"
+          EOF
+          cat > runtime_sanity/sanity.gd <<'EOF'
+          extends SceneTree
+
+          func _initialize() -> void:
+              var info := Engine.get_version_info()
+              print("ENGINE_SANITY VERSION ", info.get("string", "unknown"))
+
+              var unit := Vector3(1.0, 2.0, 3.0).normalized()
+              if absf(unit.length() - 1.0) > 0.0001:
+                  push_error("ENGINE_SANITY vector math invariant failed")
+                  quit(10)
+                  return
+
+              var payload := Resource.new()
+              payload.set_meta("engine_sanity", {
+                  "answer": 42,
+                  "vector": Vector3(4.0, 8.0, 15.0),
+                  "label": "INVADER"
+              })
+              var save_rc := ResourceSaver.save(payload, "res://sanity_roundtrip.tres")
+              if save_rc != OK:
+                  push_error("ENGINE_SANITY ResourceSaver failed: %s" % save_rc)
+                  quit(11)
+                  return
+
+              var loaded := ResourceLoader.load("res://sanity_roundtrip.tres")
+              if loaded == null or not loaded.has_meta("engine_sanity"):
+                  push_error("ENGINE_SANITY ResourceLoader roundtrip failed")
+                  quit(12)
+                  return
+              var roundtrip: Dictionary = loaded.get_meta("engine_sanity")
+              if int(roundtrip.get("answer", -1)) != 42 or str(roundtrip.get("label", "")) != "INVADER":
+                  push_error("ENGINE_SANITY serialization invariant failed")
+                  quit(13)
+                  return
+
+              print("ENGINE_SANITY PASS")
+              quit(0)
+          EOF
+
+      - name: Fresh import
+        run: |
+          set -euo pipefail
+          set +e
+          timeout 180s "$GODOT_EXE" --headless --path "$GITHUB_WORKSPACE/runtime_sanity" --import             > evidence/import.log 2>&1
+          rc=$?
+          set -e
+          cat evidence/import.log
+          echo "exit=$rc" | tee evidence/import-result.txt
+          test "$rc" -eq 0
+          errors="$(grep -E '^(SCRIPT ERROR:|ERROR:)' evidence/import.log | grep -v 'resources still in use at exit' || true)"
+          test -z "$errors"
+
+      - name: Headless editor boot
+        run: |
+          set -euo pipefail
+          set +e
+          timeout 120s "$GODOT_EXE" --headless --editor --path "$GITHUB_WORKSPACE/runtime_sanity" --quit-after 2             > evidence/editor.log 2>&1
+          rc=$?
+          set -e
+          cat evidence/editor.log
+          echo "exit=$rc" | tee evidence/editor-result.txt
+          test "$rc" -eq 0
+          errors="$(grep -E '^(SCRIPT ERROR:|ERROR:)' evidence/editor.log | grep -v 'resources still in use at exit' || true)"
+          test -z "$errors"
+
+      - name: GDScript and resource roundtrip
+        run: |
+          set -euo pipefail
+          set +e
+          timeout 120s "$GODOT_EXE" --headless --path "$GITHUB_WORKSPACE/runtime_sanity"             --script res://sanity.gd > evidence/script.log 2>&1
+          rc=$?
+          set -e
+          cat evidence/script.log
+          echo "exit=$rc" | tee evidence/script-result.txt
+          test "$rc" -eq 0
+          grep -q '^ENGINE_SANITY PASS$' evidence/script.log
+          errors="$(grep -E '^(SCRIPT ERROR:|ERROR:)' evidence/script.log | grep -v 'resources still in use at exit' || true)"
+          test -z "$errors"
+          test -s runtime_sanity/sanity_roundtrip.tres
+          sha256sum runtime_sanity/sanity_roundtrip.tres | tee evidence/roundtrip-sha256.txt
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.id }}-runtime-sanity
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14

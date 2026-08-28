@@ -1,0 +1,78 @@
+name: Export OVERLORD v0.5 cda0456 runtime
+
+on:
+  push:
+    branches:
+      - verification/overlord-v05-cda0456-export
+    paths:
+      - '.github/workflows/export-overlord-v05-cda0456.yml'
+      - 'export/patches/overlord-v05-cda0456.patch'
+      - 'export/manifests/overlord-v05-cda0456.sha1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout toolchain
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Materialize current OVERLORD runtime tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot=c9d40ac562b9d4e49da1485fe63562e2620f1a10
+          source_sha=cda0456cf26dffac8b221bac3701dbedf7ac084a
+          workdir="${RUNNER_TEMP}/overlord-v05-cda0456"
+          project="${workdir}/workspaces/OVERLORD"
+          patch="${GITHUB_WORKSPACE}/export/patches/overlord-v05-cda0456.patch"
+          manifest="${GITHUB_WORKSPACE}/export/manifests/overlord-v05-cda0456.sha1"
+
+          rm -rf "${workdir}"
+          mkdir -p "${workdir}"
+          git fetch --depth=1 origin "${snapshot}"
+          git archive "${snapshot}" workspaces/OVERLORD | tar -x -C "${workdir}"
+
+          (
+            cd "${project}"
+            git apply --check "${patch}"
+            git apply "${patch}"
+          )
+
+          checked=0
+          while read -r expected path; do
+            test -n "${expected}" || continue
+            if [[ ! -f "${project}/${path}" ]]; then
+              echo "MISSING: ${path}" >&2
+              exit 1
+            fi
+            actual="$(git hash-object "${project}/${path}")"
+            if [[ "${actual}" != "${expected}" ]]; then
+              echo "SHA MISMATCH: ${path} expected=${expected} actual=${actual}" >&2
+              exit 1
+            fi
+            checked=$((checked + 1))
+          done < "${manifest}"
+
+          if [[ "${checked}" -ne 134 ]]; then
+            echo "Expected 134 verified runtime files, got ${checked}" >&2
+            exit 1
+          fi
+
+          echo "${source_sha}" > "${workdir}/source-sha.txt"
+          echo "${snapshot}" > "${workdir}/base-snapshot-sha.txt"
+          echo "MATERIALIZED_RUNTIME_FILES=${checked}" > "${workdir}/verification.txt"
+          echo "MATERIALIZED_SOURCE_SHA=${source_sha}" >> "${workdir}/verification.txt"
+
+      - name: Upload exact runtime checkout
+        uses: actions/upload-artifact@v4
+        with:
+          name: overlord-v05-cda0456-runtime
+          path: ${{ runner.temp }}/overlord-v05-cda0456
+          retention-days: 1

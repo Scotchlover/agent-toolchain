@@ -46,7 +46,7 @@ jobs:
           if count != 193 or len(overlay) != 6:
               raise SystemExit("unexpected reconstruction size")
           PY
-          printf '%s\n' 'e852da3934acd989fdfbc6c3571c21454154a2b7' > export/SOURCE_SHA.txt
+          printf '%s\n' '397faf377942830510fc3657e8118d1001a041c1' > export/SOURCE_SHA.txt
 
       - name: Pin Godot 4.7.2
         shell: bash

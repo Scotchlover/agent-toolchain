@@ -1,0 +1,132 @@
+name: HARVEST e852 runtime audit
+
+on:
+  push:
+    branches:
+      - verification/harvest-e852-runtime-audit
+    paths:
+      - '.github/workflows/verify-harvest-e852.yml'
+      - 'transfer/harvest_e852/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      - name: Reconstruct recovery source and overlay e852
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p export/project export/logs
+          python - <<'PY'
+          import json, pathlib
+          root = pathlib.Path("export/project")
+          count = 0
+          for p in sorted(pathlib.Path("transfer/harvest_ee12903").glob("chunk_*.json")):
+              for r in json.loads(p.read_text(encoding="utf-8")):
+                  out = root / r["path"]
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  out.write_text(r["content"], encoding="utf-8", newline="")
+                  count += 1
+          overlay = json.loads(pathlib.Path("transfer/harvest_e852/overlay.json").read_text(encoding="utf-8"))
+          for r in overlay:
+              out = root / r["path"]
+              out.parent.mkdir(parents=True, exist_ok=True)
+              out.write_text(r["content"], encoding="utf-8", newline="")
+          print("BASE_FILES=", count, "OVERLAY_FILES=", len(overlay))
+          if count != 193 or len(overlay) != 6:
+              raise SystemExit("unexpected reconstruction size")
+          PY
+          printf '%s\n' 'e852da3934acd989fdfbc6c3571c21454154a2b7' > export/SOURCE_SHA.txt
+
+      - name: Pin Godot 4.7.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q runtimes/godot/4.7.2/linux-x86_64/Godot_v4.7.2-stable_linux.x86_64.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          sudo ln -sf /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 /usr/local/bin/godot
+          test "$(godot --version)" = "4.7.2.stable.official.ed1daf0bf"
+          godot --version | tee export/logs/godot-version.log
+
+      - name: Import
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --import --path export/project 2>&1 | tee export/logs/import.log
+
+      - name: Smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project -- --test 2>&1 | tee export/logs/smoke.log
+
+      - name: Kernel
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/kernel/test_runner.gd 2>&1 | tee export/logs/kernel.log
+
+      - name: HSNP
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/test_hsnp.gd 2>&1 | tee export/logs/hsnp.log
+
+      - name: Mech
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/mech/run_tests.gd 2>&1 | tee export/logs/mech.log
+          ! grep -E "ObjectDB instances were leaked|Leaked instance" export/logs/mech.log
+
+      - name: Two-process operation
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot --headless --path export/project -- --host --operation --crowd-count=64 --quit-after-sec=8 > export/logs/host.log 2>&1 &
+          hp=$!
+          sleep 2
+          godot --headless --path export/project -- --connect=127.0.0.1 --operation --quit-after-sec=4 > export/logs/client.log 2>&1
+          wait "$hp"
+          cat export/logs/host.log
+          cat export/logs/client.log
+          ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error|above the MTU|ObjectDB.*leak|Leaked instance" export/logs/host.log
+          ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error|above the MTU|ObjectDB.*leak|Leaked instance" export/logs/client.log
+
+      - name: Crowd 150 gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          port=25250
+          h=export/logs/ladder_host_150.log
+          c=export/logs/ladder_client_150.log
+          duration=60
+          godot --headless --path export/project -- --host --port=$port --crowd-sim --crowd-count=150 --quit-after-sec=$duration --ladder-print > "$h" 2>&1 &
+          hp=$!
+          sleep 1
+          godot --headless --path export/project -- --connect=127.0.0.1:$port --crowd-count=64 --quit-after-sec=$((duration - 2)) --ladder-print > "$c" 2>&1
+          wait "$hp"
+          ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error|above the MTU|ObjectDB.*leak|Leaked instance" "$h"
+          ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error|above the MTU|ObjectDB.*leak|Leaked instance" "$c"
+          stat=$(grep "\[CROWDSTAT\]" "$h" | tail -1)
+          echo "$stat"
+          alive=$(printf '%s\n' "$stat" | sed -E 's/.*alive=([0-9]+).*/\1/')
+          test "$alive" -eq 150
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harvest-e852-runtime-audit
+          path: export/
+          retention-days: 1

@@ -1,0 +1,166 @@
+name: HARVEST ee12903 local-run verification
+
+on:
+  push:
+    branches:
+      - verification/harvest-ee12903-local-run
+    paths:
+      - '.github/workflows/export-harvest-ee12903-local-run.yml'
+      - 'transfer/harvest_ee12903/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout verification toolchain
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      - name: Reconstruct exact HARVEST recovery source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p export/project export/runtime export/logs
+          python - <<'PY'
+          import json, pathlib
+          src = pathlib.Path("transfer/harvest_ee12903")
+          root = pathlib.Path("export/project")
+          count = 0
+          for p in sorted(src.glob("chunk_*.json")):
+              records = json.loads(p.read_text(encoding="utf-8"))
+              for r in records:
+                  out = root / r["path"]
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  with out.open("w", encoding="utf-8", newline="") as fh:
+                      fh.write(r["content"])
+                  count += 1
+          print(f"RECONSTRUCTED_FILES={count}")
+          if count != 193:
+              raise SystemExit(f"expected 193 runtime/source files, got {count}")
+          PY
+          test -f export/project/project.godot
+          printf '%s\n' 'ee12903e03712109714105bb41e738214bb9a7ad' > export/SOURCE_SHA.txt
+          find export/project -type f | sort > export/files.txt
+
+      - name: Materialize pinned Godot 4.7.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp runtimes/godot/4.7.2/linux-x86_64/Godot_v4.7.2-stable_linux.x86_64.zip export/runtime/
+          cp runtimes/godot/4.7.2/linux-x86_64/SHA256SUMS.txt export/runtime/
+          (cd export/runtime && sha256sum -c SHA256SUMS.txt)
+          unzip -q export/runtime/Godot_v4.7.2-stable_linux.x86_64.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          sudo ln -sf /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 /usr/local/bin/godot
+          test "$(godot --version)" = "4.7.2.stable.official.ed1daf0bf"
+          godot --version | tee export/logs/godot-version.log
+          sha256sum export/runtime/Godot_v4.7.2-stable_linux.x86_64.zip | tee export/logs/godot-sha256.log
+
+      - name: Import project
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --import --path export/project 2>&1 | tee export/logs/import.log
+
+      - name: Smoke suite
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project -- --test 2>&1 | tee export/logs/smoke.log
+
+      - name: Mission kernel suite
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/kernel/test_runner.gd 2>&1 | tee export/logs/kernel.log
+
+      - name: Operation strategy matrix
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/operation/strategy_matrix.gd 2>&1 | tee export/logs/strategy.log
+
+      - name: HSNP suite
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/test_hsnp.gd 2>&1 | tee export/logs/hsnp.log
+
+      - name: Mech suite
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path export/project --script res://tests/orchestrators/mech/run_tests.gd 2>&1 | tee export/logs/mech.log
+
+      - name: Two-process operation boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot --headless --path export/project -- --host --operation --crowd-count=64 --quit-after-sec=8 > export/logs/host.log 2>&1 &
+          host_pid=$!
+          sleep 2
+          godot --headless --path export/project -- --connect=127.0.0.1 --operation --quit-after-sec=4 > export/logs/client.log 2>&1
+          wait "$host_pid"
+          cat export/logs/host.log
+          cat export/logs/client.log
+          ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error" export/logs/host.log
+          ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error" export/logs/client.log
+
+      - name: Real CrowdSim functional ladder
+        shell: bash
+        run: |
+          set -euo pipefail
+          port=25100
+          for n in 64 96 128 150; do
+            port=$((port + 1))
+            duration=$((n * 35 / 100 + 8))
+            h="export/logs/ladder_host_$n.log"
+            c="export/logs/ladder_client_$n.log"
+            godot --headless --path export/project -- --host --port=$port --crowd-sim --crowd-count=$n --quit-after-sec=$duration --ladder-print > "$h" 2>&1 &
+            hp=$!
+            sleep 1
+            godot --headless --path export/project -- --connect=127.0.0.1:$port --crowd-count=64 --quit-after-sec=$((duration - 2)) --ladder-print > "$c" 2>&1
+            wait "$hp"
+            ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error" "$h"
+            ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error" "$c"
+            stat=$(grep "\[CROWDSTAT\]" "$h" | tail -1 || true)
+            test -n "$stat"
+            alive=$(printf '%s\n' "$stat" | sed -E 's/.*alive=([0-9]+).*/\1/')
+            snap=$(printf '%s\n' "$stat" | sed -E 's/.*snap_bytes=([0-9]+).*/\1/')
+            echo "LADDER_RESULT n=$n alive=$alive snap_bytes=$snap"
+            test "$alive" -eq "$n"
+            test "$snap" -gt 16
+          done
+
+      - name: Virtual headful launch smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v xvfb-run >/dev/null 2>&1; then
+            set +e
+            timeout 12s xvfb-run -a godot --path export/project > export/logs/headful.log 2>&1
+            code=$?
+            set -e
+            cat export/logs/headful.log
+            if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+              exit "$code"
+            fi
+            ! grep -E "SCRIPT ERROR|Parse Error|Invalid call|RPC.*error" export/logs/headful.log
+          else
+            echo "xvfb-run unavailable" | tee export/logs/headful.log
+          fi
+
+      - name: Upload exact local-run bundle and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harvest-ee12903-local-run
+          path: export/
+          retention-days: 1
